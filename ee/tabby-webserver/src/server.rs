@@ -18,8 +18,8 @@ pub struct ServerContext {
     client: Client<HttpConnector>,
     completion: worker::WorkerGroup,
     chat: worker::WorkerGroup,
-    db_conn: DbConn,
 
+    pub db_conn: DbConn,
     pub logger: Arc<dyn RawEventLogger>,
     pub code: Arc<dyn CodeSearch>,
 }

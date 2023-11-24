@@ -2,14 +2,14 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use lazy_static::lazy_static;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rusqlite_migration::{AsyncMigrations, M};
 use tabby_common::path::tabby_root;
 use tokio_rusqlite::Connection;
 
 lazy_static! {
-    static ref MIGRATIONS: AsyncMigrations = AsyncMigrations::new(vec![M::up(
-        r#"
+    static ref MIGRATIONS: AsyncMigrations = AsyncMigrations::new(vec![
+        M::up(r#"
             CREATE TABLE IF NOT EXISTS registration_token (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token VARCHAR(255) NOT NULL,
@@ -17,8 +17,73 @@ lazy_static! {
                 updated_at TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_token` UNIQUE (`token`)
             );
-        "#
-    ),]);
+        "#),
+        M::up(r#"
+            CREATE TABLE IF NOT EXISTS users (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                username     VARCHAR(150) NOT NULL COLLATE NOCASE,
+                email        VARCHAR(150) NOT NULL COLLATE NOCASE,
+                password     VARCHAR(128) NOT NULL,
+                is_superuser BOOLEAN NOT NULL DEFAULT 0,
+                is_active    BOOLEAN NOT NULL DEFAULT 1,
+                created_at   TIMESTAMP DEFAULT (DATETIME('now')),
+                updated_at   TIMESTAMP DEFAULT (DATETIME('now')),
+                CONSTRAINT `idx_username` UNIQUE (`username`),
+                CONSTRAINT `idx_email` UNIQUE (`email`)
+            );
+        "#),
+        M::up(r#"
+            CREATE TABLE IF NOT EXISTS roles (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        VARCHAR(150) NOT NULL COLLATE NOCASE,
+                description VARCHAR(255) NOT NULL,
+                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                CONSTRAINT `idx_name` UNIQUE (`name`)
+            );
+        "#),
+        M::up(r#"
+            CREATE TABLE IF NOT EXISTS user_role_bindings (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id  INTEGER NOT NULL,
+                role_id  INTEGER NOT NULL,
+                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                CONSTRAINT `idx_user_role` UNIQUE (`user_id`, `role_id`)
+            );
+        "#),
+        M::up(r#"
+            CREATE TABLE IF NOT EXISTS permissions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        VARCHAR(150) NOT NULL COLLATE NOCASE,
+                description VARCHAR(255) NOT NULL,
+                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                CONSTRAINT `idx_name` UNIQUE (`name`)
+            );
+        "#),
+        M::up(r#"
+            CREATE TABLE IF NOT EXISTS role_permission_bindings (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                role_id  INTEGER NOT NULL,
+                permission_id  INTEGER NOT NULL,
+                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
+                CONSTRAINT `idx_role_permission` UNIQUE (`role_id`, `permission_id`)
+            );
+        "#),
+    ]);
+}
+
+#[derive(Debug, Default)]
+pub struct User {
+    is_active: bool,
+    created_at: u32,
+    updated_at: u32,
+
+    pub id: u32,
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    pub is_superuser: bool,
 }
 
 async fn db_path() -> Result<PathBuf> {
@@ -39,6 +104,7 @@ impl DbConn {
     }
 
     /// Initialize database, create tables and insert first token if not exist
+    /// Add default `admin` if not exist
     async fn init_db(mut conn: Connection) -> Result<Self> {
         MIGRATIONS.to_latest(&mut conn).await?;
 
@@ -51,10 +117,38 @@ impl DbConn {
         })
         .await?;
 
+        conn.call(|c| {
+            c.execute_batch(r#"
+                BEGIN;
+                INSERT OR IGNORE INTO users (username, email, password, is_superuser) VALUES ('tabby', 'hello@tabby.com', '', 1);
+                INSERT OR IGNORE INTO roles (name, description) VALUES ('admin', 'System default administrator');
+                INSERT OR IGNORE INTO user_role_bindings (user_id, role_id) VALUES (
+                    (SELECT id FROM users WHERE username = 'tabby'),
+                    (SELECT id FROM roles WHERE name = 'admin')
+                );
+                INSERT OR IGNORE INTO permissions (name, description) VALUES ('repo.resolve.view', 'Access to local repositories');
+                INSERT OR IGNORE INTO permissions (name, description) VALUES ('repo.meta.view', 'Access to local repositories meta');
+                INSERT OR IGNORE INTO role_permission_bindings (role_id, permission_id) VALUES (
+                    (SELECT id FROM roles WHERE name = 'admin'),
+                    (SELECT id FROM permissions WHERE name = 'repo.resolve.view')
+                );
+                INSERT OR IGNORE INTO role_permission_bindings (role_id, permission_id) VALUES (
+                    (SELECT id FROM roles WHERE name = 'admin'),
+                    (SELECT id FROM permissions WHERE name = 'repo.meta.view')
+                );
+                COMMIT;
+            "#)
+        })
+        .await?;
+
         Ok(Self {
             conn: Arc::new(conn),
         })
     }
+}
+
+/// db read/write operations for `registration_token` table
+impl DbConn {
 
     /// Query token from database.
     /// Since token is global unique for each tabby server, by right there's only one row in the table.
@@ -96,6 +190,101 @@ impl DbConn {
     }
 }
 
+/// db read/write operations for `users` table
+impl DbConn {
+
+    pub async fn create_user(&self, username: String, email: String, password: String, is_superuser: bool) -> Result<()> {
+        let res = self
+            .conn
+            .call(move |c| {
+                c.execute(
+                    r#"INSERT INTO user (username, email, password, is_superuser) VALUES (?, ?, ?, ?)"#,
+                    params![username, email, password, is_superuser],
+                )
+            })
+            .await?;
+        if res != 1 {
+            return Err(anyhow::anyhow!("failed to create user"));
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
+        let user = self
+            .conn
+            .call(|c| {
+                c.query_row(
+                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM user WHERE username = ?"#,
+                    params![username],
+                    |row| {
+                        Ok(User {
+                            id: row.get(0)?,
+                            username: row.get(1)?,
+                            email: row.get(2)?,
+                            password: row.get(3)?,
+                            is_superuser: row.get(4)?,
+                            is_active: row.get(5)?,
+                            created_at: row.get(6)?,
+                            updated_at: row.get(7)?,
+                        })
+                    },
+                ).optional()
+            })
+            .await?;
+
+        Ok(user)
+    }
+
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        let user = self
+            .conn
+            .call(|c| {
+                c.query_row(
+                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM user WHERE email = ?"#,
+                    params![email],
+                    |row| {
+                        Ok(User {
+                            id: row.get(0)?,
+                            username: row.get(1)?,
+                            email: row.get(2)?,
+                            password: row.get(3)?,
+                            is_superuser: row.get(4)?,
+                            is_active: row.get(5)?,
+                            created_at: row.get(6)?,
+                            updated_at: row.get(7)?,
+                        })
+                    },
+                ).optional()
+            })
+            .await?;
+
+        Ok(user)
+    }
+}
+
+/// db read operations to query permissions
+impl DbConn {
+    pub async fn get_user_all_permissions(&self, username: &str) -> Result<Vec<String>> {
+        let perms = self
+            .conn
+            .call(|c| {
+                c.prepare(
+                    r#"SELECT p.name FROM permissions p
+                    INNER JOIN role_permission_bindings rpb ON rpb.permission_id = p.id
+                    INNER JOIN user_role_bindings urb ON urb.role_id = rpb.role_id
+                    WHERE urb.name = ?"#,
+                )
+            })
+            .await?
+            .query_map(params![username], |row| row.get(0))
+            .await?
+            .collect::<Vec<String>>()?;
+
+        Ok(perms)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +315,40 @@ mod tests {
         let new_token = conn.read_registration_token().await.unwrap();
         assert_eq!(new_token.len(), 36);
         assert_ne!(old_token, new_token);
+    }
+
+    #[tokio::test]
+    async fn test_create_user() {
+        let conn = new_in_memory().await.unwrap();
+
+        let username = "admin";
+        let email = "hello@example.com";
+        let passwd = "123456";
+        let is_superuser = true;
+        conn.create_user(username.to_string(), email.to_string(), passwd.to_string(), is_superuser).await.unwrap();
+
+        let user1 = conn.get_user_by_username(username).await.unwrap().unwrap();
+        let user2 = conn.get_user_by_email(email).await.unwrap().unwrap();
+        assert_eq!(user1.id, user2.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_username() {
+        let conn = new_in_memory().await.unwrap();
+
+        let username = "admin";
+        let user = conn.get_user_by_username(username).await.unwrap();
+
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_email() {
+        let conn = new_in_memory().await.unwrap();
+
+        let email = "hello@example.com";
+        let user = conn.get_user_by_email(email).await.unwrap();
+
+        assert!(user.is_none());
     }
 }
