@@ -9,9 +9,8 @@ use axum::{
     headers::{authorization::Bearer, Authorization},
     http::{Request, StatusCode},
     middleware::{from_fn, from_fn_with_state, Next},
-    response::{Response},
-    routing,
-    Json, Router,
+    response::Response,
+    routing, Json, Router,
 };
 use tabby_common::path::repositories_dir;
 use tower::ServiceBuilder;
@@ -19,7 +18,7 @@ use tracing::{debug, instrument, warn};
 
 use crate::{
     authentication::{validate_jwt, UserInfo},
-    authorization::{AuthorizationService},
+    authorization::AuthorizationService,
     repositories,
     repositories::resolve::{resolve_dir, resolve_file, resolve_meta, Meta, ResolveParams},
     server::ServerContext,
