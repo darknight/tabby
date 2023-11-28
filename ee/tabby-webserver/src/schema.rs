@@ -1,7 +1,13 @@
 use juniper::{graphql_object, EmptySubscription, FieldResult, RootNode};
 
-use crate::{api::Worker, server::ServerContext};
-use crate::authentication::{AuthenticationService, LoginInput, LoginResponse, RefreshTokenResponse, RegisterInput, RegisterResponse, VerifyAccessTokenResponse};
+use crate::{
+    api::Worker,
+    authentication::{
+        AuthenticationService, LoginInput, LoginResponse, RefreshTokenResponse, RegisterInput,
+        RegisterResponse, VerifyAccessTokenResponse,
+    },
+    server::ServerContext,
+};
 
 // To make our context usable by Juniper, we have to implement a marker trait.
 impl juniper::Context for ServerContext {}
@@ -31,7 +37,10 @@ impl Mutation {
         Ok(token)
     }
 
-    async fn user_register(ctx: &ServerContext, input: RegisterInput) -> FieldResult<RegisterResponse> {
+    async fn user_register(
+        ctx: &ServerContext,
+        input: RegisterInput,
+    ) -> FieldResult<RegisterResponse> {
         let resp = ctx.register(input).await?;
         Ok(resp)
     }
@@ -41,14 +50,18 @@ impl Mutation {
         Ok(resp)
     }
 
-    async fn refresh_token(ctx: &ServerContext,
-                           refresh_token: String) -> FieldResult<RefreshTokenResponse> {
+    async fn refresh_token(
+        ctx: &ServerContext,
+        refresh_token: String,
+    ) -> FieldResult<RefreshTokenResponse> {
         let resp = ctx.refresh_token(refresh_token).await?;
         Ok(resp)
     }
 
-    async fn verify_token(ctx: &ServerContext,
-                          access_token: String) -> FieldResult<VerifyAccessTokenResponse> {
+    async fn verify_token(
+        ctx: &ServerContext,
+        access_token: String,
+    ) -> FieldResult<VerifyAccessTokenResponse> {
         let resp = ctx.verify_token(access_token).await?;
         Ok(resp)
     }

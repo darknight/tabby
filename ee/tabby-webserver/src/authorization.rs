@@ -22,14 +22,15 @@
 //! authorization library such as [oso](https://github.com/osohq/oso), [casbin](https://github.com/casbin/casbin), etc.
 //!
 use std::collections::HashSet;
-use async_trait::async_trait;
+
 use anyhow::Result;
+use async_trait::async_trait;
 use lazy_static::lazy_static;
-use validator::Validate;
-use crate::server::ServerContext;
-use crate::authentication::UserInfo;
 use regex::Regex;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
+use validator::Validate;
+
+use crate::{authentication::UserInfo, server::ServerContext};
 
 lazy_static! {
     static ref PERMISSION_RE: Regex = Regex::new(r"^(\*|[a-z\.]+)$").unwrap();
@@ -99,10 +100,7 @@ impl AuthorizationService for ServerContext {
             }
         };
         debug!("raw perms = {:?}", perms);
-        let perms = perms
-            .into_iter()
-            .map(|p| Permission::new(&p))
-            .collect();
+        let perms = perms.into_iter().map(|p| Permission::new(&p)).collect();
         Ok(perms)
     }
 }

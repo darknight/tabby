@@ -1,32 +1,29 @@
 mod resolve;
 
 use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
-    Router,
+    extract::{Extension, Path, State, TypedHeader},
+    handler::Handler,
+    headers::{authorization::Bearer, Authorization},
     http::{Request, StatusCode},
-    routing::get,
-    response::{IntoResponse, Response},
-    middleware::{self, Next},
-    extract::Extension,
+    middleware::{from_fn, from_fn_with_state, Next},
+    response::{Response},
+    routing,
+    Json, Router,
 };
-use axum::{extract::Path, routing, Json};
-use axum::handler::Handler;
-use axum::middleware::{from_fn, from_fn_with_state};
-use axum::extract::{State, TypedHeader};
-use axum::headers::Authorization;
-use axum::headers::authorization::Bearer;
-use tower::ServiceBuilder;
 use tabby_common::path::repositories_dir;
+use tower::ServiceBuilder;
 use tracing::{debug, instrument, warn};
 
 use crate::{
+    authentication::{validate_jwt, UserInfo},
+    authorization::{AuthorizationService},
     repositories,
     repositories::resolve::{resolve_dir, resolve_file, resolve_meta, Meta, ResolveParams},
+    server::ServerContext,
 };
-use crate::authentication::{UserInfo, validate_jwt};
-use crate::authorization::{AuthorizationService, Permission};
-use crate::server::ServerContext;
 
 pub fn routes(ctx: Arc<ServerContext>) -> Router {
     Router::new()
@@ -36,7 +33,7 @@ pub fn routes(ctx: Arc<ServerContext>) -> Router {
             ServiceBuilder::new()
                 .layer(from_fn(auth))
                 .layer(Extension(vec!["repo.resolve.view".to_string()]))
-                .layer(from_fn_with_state(ctx.clone(), authorize))
+                .layer(from_fn_with_state(ctx.clone(), authorize)),
         )
         .route("/:name/meta/", routing::get(repositories::meta))
         .route("/:name/meta/*path", routing::get(repositories::meta))
@@ -44,21 +41,21 @@ pub fn routes(ctx: Arc<ServerContext>) -> Router {
             ServiceBuilder::new()
                 .layer(from_fn(auth))
                 .layer(Extension(vec!["repo.meta.view".to_string()]))
-                .layer(from_fn_with_state(ctx.clone(), authorize))
+                .layer(from_fn_with_state(ctx.clone(), authorize)),
         )
 }
 
 async fn auth<B>(
     TypedHeader(header): TypedHeader<Authorization<Bearer>>,
     mut request: Request<B>,
-    next: Next<B>
+    next: Next<B>,
 ) -> Result<Response, StatusCode> {
     match validate_jwt(header.token()) {
         Ok(claims) => {
             request.extensions_mut().insert(claims.user_info());
             Ok(next.run(request).await)
-        },
-        Err(_) => Err(StatusCode::UNAUTHORIZED)
+        }
+        Err(_) => Err(StatusCode::UNAUTHORIZED),
     }
 }
 
@@ -67,11 +64,16 @@ async fn authorize<B>(
     Extension(perms): Extension<Vec<String>>,
     State(state): State<Arc<ServerContext>>,
     request: Request<B>,
-    next: Next<B>
+    next: Next<B>,
 ) -> Result<Response, StatusCode> {
     debug!("authorize: {:?} {:?}", user, perms);
     let perms = perms.iter().map(|p| p.into()).collect::<Vec<_>>();
-    if user.is_superuser() || state.has_all_permissions(&user, &perms).await.unwrap_or(false) {
+    if user.is_superuser()
+        || state
+            .has_all_permissions(&user, &perms)
+            .await
+            .unwrap_or(false)
+    {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::FORBIDDEN)

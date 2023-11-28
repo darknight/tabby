@@ -2,14 +2,15 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use lazy_static::lazy_static;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{params, OptionalExtension};
 use rusqlite_migration::{AsyncMigrations, M};
 use tabby_common::path::tabby_root;
 use tokio_rusqlite::Connection;
 
 lazy_static! {
     static ref MIGRATIONS: AsyncMigrations = AsyncMigrations::new(vec![
-        M::up(r#"
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS registration_token (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token VARCHAR(255) NOT NULL,
@@ -17,8 +18,10 @@ lazy_static! {
                 updated_at TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_token` UNIQUE (`token`)
             );
-        "#),
-        M::up(r#"
+        "#
+        ),
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS users (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 username     VARCHAR(150) NOT NULL COLLATE NOCASE,
@@ -31,8 +34,10 @@ lazy_static! {
                 CONSTRAINT `idx_username` UNIQUE (`username`),
                 CONSTRAINT `idx_email` UNIQUE (`email`)
             );
-        "#),
-        M::up(r#"
+        "#
+        ),
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS roles (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 name        VARCHAR(150) NOT NULL COLLATE NOCASE,
@@ -41,8 +46,10 @@ lazy_static! {
                 updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_name` UNIQUE (`name`)
             );
-        "#),
-        M::up(r#"
+        "#
+        ),
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS user_role_bindings (
                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id  INTEGER NOT NULL,
@@ -50,8 +57,10 @@ lazy_static! {
                 created_at  TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_user_role` UNIQUE (`user_id`, `role_id`)
             );
-        "#),
-        M::up(r#"
+        "#
+        ),
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS permissions (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 name        VARCHAR(150) NOT NULL COLLATE NOCASE,
@@ -60,8 +69,10 @@ lazy_static! {
                 updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_name` UNIQUE (`name`)
             );
-        "#),
-        M::up(r#"
+        "#
+        ),
+        M::up(
+            r#"
             CREATE TABLE IF NOT EXISTS role_permission_bindings (
                 id       INTEGER PRIMARY KEY AUTOINCREMENT,
                 role_id  INTEGER NOT NULL,
@@ -69,7 +80,8 @@ lazy_static! {
                 created_at  TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_role_permission` UNIQUE (`role_id`, `permission_id`)
             );
-        "#),
+        "#
+        ),
     ]);
 }
 
@@ -149,7 +161,6 @@ impl DbConn {
 
 /// db read/write operations for `registration_token` table
 impl DbConn {
-
     /// Query token from database.
     /// Since token is global unique for each tabby server, by right there's only one row in the table.
     pub async fn read_registration_token(&self) -> Result<String> {
@@ -192,8 +203,13 @@ impl DbConn {
 
 /// db read/write operations for `users` table
 impl DbConn {
-
-    pub async fn create_user(&self, username: String, email: String, password: String, is_superuser: bool) -> Result<()> {
+    pub async fn create_user(
+        &self,
+        username: String,
+        email: String,
+        password: String,
+        is_superuser: bool,
+    ) -> Result<()> {
         let res = self
             .conn
             .call(move |c| {
@@ -270,19 +286,22 @@ impl DbConn {
     pub async fn get_user_all_permissions(&self, username: &str) -> Result<Vec<String>> {
         let username = username.to_string();
 
-        let perms = self.conn.call(move |c| {
-            let mut stmt = c.prepare(
-                r#"SELECT p.name FROM permissions p
+        let perms = self
+            .conn
+            .call(move |c| {
+                let mut stmt = c.prepare(
+                    r#"SELECT p.name FROM permissions p
                     INNER JOIN role_permission_bindings rpb ON rpb.permission_id = p.id
                     INNER JOIN user_role_bindings urb ON urb.role_id = rpb.role_id
                     INNER JOIN users u ON u.id = urb.user_id
                     WHERE u.username = ?"#,
-            )?;
-            let rows = stmt
-                .query_map(params![username], |row| Ok(row.get(0)?))?
-                .collect::<Result<Vec<String>, rusqlite::Error>>()?;
-            Ok(rows)
-        }).await?;
+                )?;
+                let rows = stmt
+                    .query_map(params![username], |row| row.get(0))?
+                    .collect::<Result<Vec<String>, rusqlite::Error>>()?;
+                Ok(rows)
+            })
+            .await?;
 
         Ok(perms)
     }
@@ -332,11 +351,13 @@ mod tests {
             username.to_string(),
             email.to_string(),
             passwd.to_string(),
-            is_superuser
-        ).await.unwrap();
+            is_superuser,
+        )
+        .await
+        .unwrap();
 
         let user1 = conn.get_user_by_username(username).await.unwrap().unwrap();
-        let user2 = conn.get_user_by_email(&email).await.unwrap().unwrap();
+        let user2 = conn.get_user_by_email(email).await.unwrap().unwrap();
         assert_eq!(user1.id, user2.id);
     }
 

@@ -1,17 +1,20 @@
-use std::borrow::Cow;
-use std::env;
-use juniper::{GraphQLInputObject, GraphQLObject};
-use async_trait::async_trait;
+use std::{borrow::Cow, env};
+
 use anyhow::Result;
-use argon2::{Argon2, password_hash, PasswordHasher, PasswordVerifier};
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::SaltString;
-use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
-use crate::server::ServerContext;
+use argon2::{
+    password_hash,
+    password_hash::{rand_core::OsRng, SaltString},
+    Argon2, PasswordHasher, PasswordVerifier,
+};
+use async_trait::async_trait;
 use jsonwebtoken as jwt;
+use juniper::{GraphQLInputObject, GraphQLObject};
+use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use validator::{Validate, ValidationError};
+
+use crate::server::ServerContext;
 
 lazy_static! {
     static ref USERNAME_RE: Regex = Regex::new(r"^[a-zA-Z0-9_]+$").unwrap();
@@ -60,15 +63,39 @@ impl From<jwt::errors::Error> for AuthError {
 #[derive(Validate, GraphQLInputObject)]
 pub struct RegisterInput {
     #[validate(regex = "USERNAME_RE")]
-    #[validate(length(min = 4, "username_too_short", message = "Username must be at least 8 characters"))]
-    #[validate(length(max = 20, "username_too_long", message = "Username must be at most 20 characters"))]
+    #[validate(length(
+        min = 4,
+        "username_too_short",
+        message = "Username must be at least 8 characters"
+    ))]
+    #[validate(length(
+        max = 20,
+        "username_too_long",
+        message = "Username must be at most 20 characters"
+    ))]
     pub username: String,
     #[validate(email)]
-    #[validate(length(max = 128, code = "email_too_long", message = "Email must be at most 128 characters"))]
+    #[validate(length(
+        max = 128,
+        code = "email_too_long",
+        message = "Email must be at most 128 characters"
+    ))]
     pub email: String,
-    #[validate(length(min = 8, code = "password_too_short", message = "Password must be at least 8 characters"))]
-    #[validate(length(max = 20, code = "password_too_long", message = "Password must be at most 20 characters"))]
-    #[validate(must_match(other = "password2", code = "password_mismatch", message = "Passwords do not match"))]
+    #[validate(length(
+        min = 8,
+        code = "password_too_short",
+        message = "Password must be at least 8 characters"
+    ))]
+    #[validate(length(
+        max = 20,
+        code = "password_too_long",
+        message = "Password must be at most 20 characters"
+    ))]
+    #[validate(must_match(
+        other = "password2",
+        code = "password_mismatch",
+        message = "Passwords do not match"
+    ))]
     pub password1: String,
     #[validate(length(min = 8, max = 20))]
     pub password2: String,
@@ -120,14 +147,34 @@ impl RegisterResponse {
 
 #[derive(Validate, GraphQLInputObject)]
 pub struct LoginInput {
-    #[validate(length(min = 4, "username_too_short", message = "Username must be at least 8 characters"))]
-    #[validate(length(max = 20, "username_too_long", message = "Username must be at most 20 characters"))]
+    #[validate(length(
+        min = 4,
+        "username_too_short",
+        message = "Username must be at least 8 characters"
+    ))]
+    #[validate(length(
+        max = 20,
+        "username_too_long",
+        message = "Username must be at most 20 characters"
+    ))]
     pub username: Option<String>,
     #[validate(email)]
-    #[validate(length(max = 128, code = "email_too_long", message = "Email must be at most 128 characters"))]
+    #[validate(length(
+        max = 128,
+        code = "email_too_long",
+        message = "Email must be at most 128 characters"
+    ))]
     pub email: Option<String>,
-    #[validate(length(min = 8, code = "password_too_short", message = "Password must be at least 8 characters"))]
-    #[validate(length(max = 20, code = "password_too_long", message = "Password must be at most 20 characters"))]
+    #[validate(length(
+        min = 8,
+        code = "password_too_short",
+        message = "Password must be at least 8 characters"
+    ))]
+    #[validate(length(
+        max = 20,
+        code = "password_too_long",
+        message = "Password must be at most 20 characters"
+    ))]
     pub password: String,
 }
 
@@ -150,7 +197,6 @@ pub struct LoginResponse {
 }
 
 impl LoginResponse {
-
     fn new(access_token: String, refresh_token: String) -> Self {
         Self {
             access_token,
@@ -283,22 +329,18 @@ impl AuthenticationService for ServerContext {
 
         // check if username exists
         if let Some(_) = self.db_conn.get_user_by_email(&input.email).await? {
-            let resp = RegisterResponse::with_error(
-                AuthError {
-                    message: "Email already exists".to_string(),
-                    code: "email_already_exists".to_string(),
-                }
-            );
+            let resp = RegisterResponse::with_error(AuthError {
+                message: "Email already exists".to_string(),
+                code: "email_already_exists".to_string(),
+            });
             return Ok(resp);
         }
         // check if email exists
         if let Some(_) = self.db_conn.get_user_by_username(&input.username).await? {
-            let resp = RegisterResponse::with_error(
-                AuthError {
-                    message: "Username already exists".to_string(),
-                    code: "username_already_exists".to_string(),
-                }
-            );
+            let resp = RegisterResponse::with_error(AuthError {
+                message: "Username already exists".to_string(),
+                code: "username_already_exists".to_string(),
+            });
             return Ok(resp);
         }
 
@@ -309,12 +351,19 @@ impl AuthenticationService for ServerContext {
             }
         };
 
-        self.db_conn.create_user(input.username.clone(), input.email.clone(),
-                                 pwd_hash, false).await?;
-        let user = self.db_conn.get_user_by_username(&input.username).await?.unwrap();
+        self.db_conn
+            .create_user(input.username.clone(), input.email.clone(), pwd_hash, false)
+            .await?;
+        let user = self
+            .db_conn
+            .get_user_by_username(&input.username)
+            .await?
+            .unwrap();
 
-        let access_token = match generate_jwt(
-            Claims::new(UserInfo::new(user.username.clone(), user.is_superuser))) {
+        let access_token = match generate_jwt(Claims::new(UserInfo::new(
+            user.username.clone(),
+            user.is_superuser,
+        ))) {
             Ok(token) => token,
             Err(err) => {
                 return Ok(RegisterResponse::with_error(err.into()));
@@ -329,12 +378,10 @@ impl AuthenticationService for ServerContext {
 
     async fn login(&self, input: LoginInput) -> Result<LoginResponse> {
         if input.email.is_none() && input.username.is_none() {
-            let resp = LoginResponse::with_error(
-                AuthError {
-                    message: "Username or email is required".to_string(),
-                    code: "username_or_email_required".to_string(),
-                }
-            );
+            let resp = LoginResponse::with_error(AuthError {
+                message: "Username or email is required".to_string(),
+                code: "username_or_email_required".to_string(),
+            });
             return Ok(resp);
         }
         if let Err(err) = input.validate() {
@@ -349,34 +396,34 @@ impl AuthenticationService for ServerContext {
         let user = if let Some(email) = input.email {
             self.db_conn.get_user_by_email(&email).await?
         } else {
-            self.db_conn.get_user_by_username(&input.username.unwrap()).await?
+            self.db_conn
+                .get_user_by_username(&input.username.unwrap())
+                .await?
         };
 
         let user = match user {
             Some(user) => user,
             None => {
-                let resp = LoginResponse::with_error(
-                    AuthError {
-                        message: "User not found".to_string(),
-                        code: "user_not_found".to_string(),
-                    }
-                );
+                let resp = LoginResponse::with_error(AuthError {
+                    message: "User not found".to_string(),
+                    code: "user_not_found".to_string(),
+                });
                 return Ok(resp);
             }
         };
 
         if !password_verify(&input.password, &user.password) {
-            let resp = LoginResponse::with_error(
-                AuthError {
-                    message: "Incorrect password".to_string(),
-                    code: "incorrect_password".to_string(),
-                }
-            );
+            let resp = LoginResponse::with_error(AuthError {
+                message: "Incorrect password".to_string(),
+                code: "incorrect_password".to_string(),
+            });
             return Ok(resp);
         }
 
-        let access_token = match generate_jwt(
-            Claims::new(UserInfo::new(user.username.clone(), user.is_superuser))) {
+        let access_token = match generate_jwt(Claims::new(UserInfo::new(
+            user.username.clone(),
+            user.is_superuser,
+        ))) {
             Ok(token) => token,
             Err(err) => {
                 return Ok(LoginResponse::with_error(err.into()));
@@ -385,15 +432,12 @@ impl AuthenticationService for ServerContext {
 
         // FIXME: generate refresh token
 
-        let resp = LoginResponse::new(
-            access_token,
-            "".to_string(),
-        );
+        let resp = LoginResponse::new(access_token, "".to_string());
         Ok(resp)
     }
 
     // FIXME: implement refresh token
-    async fn refresh_token(&self, refresh_token: String) -> Result<RefreshTokenResponse> {
+    async fn refresh_token(&self, _refresh_token: String) -> Result<RefreshTokenResponse> {
         unimplemented!()
     }
 
@@ -413,9 +457,7 @@ impl AuthenticationService for ServerContext {
 fn password_hash(raw: &str) -> password_hash::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
-    let hash = argon2
-        .hash_password(raw.as_bytes(), &salt)?
-        .to_string();
+    let hash = argon2.hash_password(raw.as_bytes(), &salt)?.to_string();
 
     Ok(hash)
 }
@@ -431,13 +473,13 @@ fn password_verify(raw: &str, hash: &str) -> bool {
 
 fn generate_jwt(claims: Claims) -> jwt::errors::Result<String> {
     let header = jwt::Header::default();
-    let token = jwt::encode(&header, &claims, &*JWT_ENCODING_KEY)?;
+    let token = jwt::encode(&header, &claims, &JWT_ENCODING_KEY)?;
     Ok(token)
 }
 
 pub fn validate_jwt(token: &str) -> jwt::errors::Result<Claims> {
     let validation = jwt::Validation::default();
-    let data = jwt::decode::<Claims>(token, &*JWT_DECODING_KEY, &validation)?;
+    let data = jwt::decode::<Claims>(token, &JWT_DECODING_KEY, &validation)?;
     Ok(data.claims)
 }
 
@@ -459,8 +501,8 @@ mod tests {
         let raw = "12345678";
         let hash = password_hash(raw).unwrap();
 
-        assert_eq!(password_verify(raw, &hash), true);
-        assert_eq!(password_verify(raw, "invalid hash"), false);
+        assert!(password_verify(raw, &hash));
+        assert!(!password_verify(raw, "invalid hash"));
     }
 
     #[test]
