@@ -76,8 +76,8 @@ lazy_static! {
 #[derive(Debug, Default)]
 pub struct User {
     is_active: bool,
-    created_at: u32,
-    updated_at: u32,
+    created_at: String,
+    updated_at: String,
 
     pub id: u32,
     pub username: String,
@@ -120,7 +120,7 @@ impl DbConn {
         conn.call(|c| {
             c.execute_batch(r#"
                 BEGIN;
-                INSERT OR IGNORE INTO users (username, email, password, is_superuser) VALUES ('tabby', 'hello@tabby.com', '', 1);
+                INSERT OR IGNORE INTO users (username, email, password, is_superuser) VALUES ('tabby', 'hello@tabby.com', '$argon2id$v=19$m=19456,t=2,p=1$1JuxpDPavKcYpDzo95rnMw$Wep8E2BRzIHZWQNCx+Gr/VKdiE68ngBUmq7vy/8CDhc', 1);
                 INSERT OR IGNORE INTO roles (name, description) VALUES ('admin', 'System default administrator');
                 INSERT OR IGNORE INTO user_role_bindings (user_id, role_id) VALUES (
                     (SELECT id FROM users WHERE username = 'tabby'),
@@ -198,7 +198,7 @@ impl DbConn {
             .conn
             .call(move |c| {
                 c.execute(
-                    r#"INSERT INTO user (username, email, password, is_superuser) VALUES (?, ?, ?, ?)"#,
+                    r#"INSERT INTO users (username, email, password, is_superuser) VALUES (?, ?, ?, ?)"#,
                     params![username, email, password, is_superuser],
                 )
             })
@@ -211,11 +211,12 @@ impl DbConn {
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
+        let username = username.to_string();
         let user = self
             .conn
-            .call(|c| {
+            .call(move |c| {
                 c.query_row(
-                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM user WHERE username = ?"#,
+                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM users WHERE username = ?"#,
                     params![username],
                     |row| {
                         Ok(User {
@@ -237,11 +238,12 @@ impl DbConn {
     }
 
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        let email = email.to_string();
         let user = self
             .conn
-            .call(|c| {
+            .call(move |c| {
                 c.query_row(
-                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM user WHERE email = ?"#,
+                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM users WHERE email = ?"#,
                     params![email],
                     |row| {
                         Ok(User {
@@ -266,20 +268,21 @@ impl DbConn {
 /// db read operations to query permissions
 impl DbConn {
     pub async fn get_user_all_permissions(&self, username: &str) -> Result<Vec<String>> {
-        let perms = self
-            .conn
-            .call(|c| {
-                c.prepare(
-                    r#"SELECT p.name FROM permissions p
+        let username = username.to_string();
+
+        let perms = self.conn.call(move |c| {
+            let mut stmt = c.prepare(
+                r#"SELECT p.name FROM permissions p
                     INNER JOIN role_permission_bindings rpb ON rpb.permission_id = p.id
                     INNER JOIN user_role_bindings urb ON urb.role_id = rpb.role_id
-                    WHERE urb.name = ?"#,
-                )
-            })
-            .await?
-            .query_map(params![username], |row| row.get(0))
-            .await?
-            .collect::<Vec<String>>()?;
+                    INNER JOIN users u ON u.id = urb.user_id
+                    WHERE u.username = ?"#,
+            )?;
+            let rows = stmt
+                .query_map(params![username], |row| Ok(row.get(0)?))?
+                .collect::<Result<Vec<String>, rusqlite::Error>>()?;
+            Ok(rows)
+        }).await?;
 
         Ok(perms)
     }
@@ -321,14 +324,19 @@ mod tests {
     async fn test_create_user() {
         let conn = new_in_memory().await.unwrap();
 
-        let username = "admin";
-        let email = "hello@example.com";
+        let username = "test";
+        let email = "test@example.com";
         let passwd = "123456";
         let is_superuser = true;
-        conn.create_user(username.to_string(), email.to_string(), passwd.to_string(), is_superuser).await.unwrap();
+        conn.create_user(
+            username.to_string(),
+            email.to_string(),
+            passwd.to_string(),
+            is_superuser
+        ).await.unwrap();
 
         let user1 = conn.get_user_by_username(username).await.unwrap().unwrap();
-        let user2 = conn.get_user_by_email(email).await.unwrap().unwrap();
+        let user2 = conn.get_user_by_email(&email).await.unwrap().unwrap();
         assert_eq!(user1.id, user2.id);
     }
 

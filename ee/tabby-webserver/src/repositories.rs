@@ -2,10 +2,17 @@ mod resolve;
 
 use std::sync::Arc;
 use anyhow::Result;
-use axum::{extract::Path, http::StatusCode, response::Response, routing, Json, Router, Extension};
+use axum::{
+    Router,
+    http::{Request, StatusCode},
+    routing::get,
+    response::{IntoResponse, Response},
+    middleware::{self, Next},
+    extract::Extension,
+};
+use axum::{extract::Path, routing, Json};
 use axum::handler::Handler;
-use axum::http::Request;
-use axum::middleware::{from_fn, from_fn_with_state, Next};
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::extract::{State, TypedHeader};
 use axum::headers::Authorization;
 use axum::headers::authorization::Bearer;
@@ -25,17 +32,19 @@ pub fn routes(ctx: Arc<ServerContext>) -> Router {
     Router::new()
         .route("/:name/resolve/", routing::get(repositories::resolve))
         .route("/:name/resolve/*path", routing::get(repositories::resolve))
-        .route_layer(ServiceBuilder::new()
-            .layer(from_fn(auth))
-            .layer(Extension(vec!["repo.resolve.view"]))
-            .layer(from_fn_with_state(ctx.clone(), authorize))
+        .route_layer(
+            ServiceBuilder::new()
+                .layer(from_fn(auth))
+                .layer(Extension(vec!["repo.resolve.view".to_string()]))
+                .layer(from_fn_with_state(ctx.clone(), authorize))
         )
         .route("/:name/meta/", routing::get(repositories::meta))
         .route("/:name/meta/*path", routing::get(repositories::meta))
-        .route_layer(ServiceBuilder::new()
-            .layer(from_fn(auth))
-            .layer(Extension(vec!["repo.meta.view"]))
-            .layer(from_fn_with_state(ctx.clone(), authorize))
+        .route_layer(
+            ServiceBuilder::new()
+                .layer(from_fn(auth))
+                .layer(Extension(vec!["repo.meta.view".to_string()]))
+                .layer(from_fn_with_state(ctx.clone(), authorize))
         )
 }
 
@@ -43,7 +52,7 @@ async fn auth<B>(
     TypedHeader(header): TypedHeader<Authorization<Bearer>>,
     mut request: Request<B>,
     next: Next<B>
-) -> Result<Response<B>, StatusCode> {
+) -> Result<Response, StatusCode> {
     match validate_jwt(header.token()) {
         Ok(claims) => {
             request.extensions_mut().insert(claims.user_info());
@@ -59,10 +68,10 @@ async fn authorize<B>(
     State(state): State<Arc<ServerContext>>,
     request: Request<B>,
     next: Next<B>
-) -> Result<Response<B>, StatusCode> {
+) -> Result<Response, StatusCode> {
     debug!("authorize: {:?} {:?}", user, perms);
     let perms = perms.iter().map(|p| p.into()).collect::<Vec<_>>();
-    if user.is_superuser() || state.has_all_permissions(&user, &perms) {
+    if user.is_superuser() || state.has_all_permissions(&user, &perms).await.unwrap_or(false) {
         Ok(next.run(request).await)
     } else {
         Err(StatusCode::FORBIDDEN)

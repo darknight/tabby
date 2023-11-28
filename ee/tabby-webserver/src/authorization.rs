@@ -25,14 +25,17 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use anyhow::Result;
 use lazy_static::lazy_static;
+use validator::Validate;
 use crate::server::ServerContext;
 use crate::authentication::UserInfo;
+use regex::Regex;
+use tracing::{debug, error, info};
 
 lazy_static! {
     static ref PERMISSION_RE: Regex = Regex::new(r"^(\*|[a-z\.]+)$").unwrap();
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Validate)]
 pub struct Permission {
     #[validate(regex = "PERMISSION_RE")]
     name: String,
@@ -56,7 +59,7 @@ impl From<&String> for Permission {
 /// Inspired by https://github.com/maxcountryman/axum-login/blob/main/axum-login/src/backend.rs
 #[async_trait]
 pub trait AuthorizationService {
-    type User;
+    type User: Sync;
 
     async fn get_user_permissions(&self, _user: &Self::User) -> Result<HashSet<Permission>> {
         Ok(HashSet::new())
@@ -83,12 +86,23 @@ pub trait AuthorizationService {
     }
 }
 
+#[async_trait]
 impl AuthorizationService for ServerContext {
     type User = UserInfo;
 
     async fn get_role_permissions(&self, user: &Self::User) -> Result<HashSet<Permission>> {
-        let perms = self.db_conn.get_user_all_permissions(user.username()).await?;
-        let perms = perms.into_iter().map(|p| Permission::new(p)).collect();
+        let perms = match self.db_conn.get_user_all_permissions(user.username()).await {
+            Ok(perms) => perms,
+            Err(err) => {
+                error!("failed to fetch permission for user {:?} - {:?}", user, err);
+                vec![]
+            }
+        };
+        debug!("raw perms = {:?}", perms);
+        let perms = perms
+            .into_iter()
+            .map(|p| Permission::new(&p))
+            .collect();
         Ok(perms)
     }
 }

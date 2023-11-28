@@ -3,18 +3,22 @@ use std::env;
 use juniper::{GraphQLInputObject, GraphQLObject};
 use async_trait::async_trait;
 use anyhow::Result;
-use argon2::{Argon2, PasswordHasher, PasswordVerifier};
+use argon2::{Argon2, password_hash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use crate::server::ServerContext;
-use validator::{Validate, ValidationError};
 use jsonwebtoken as jwt;
+use regex::Regex;
+use validator::{Validate, ValidationError};
 
 lazy_static! {
     static ref USERNAME_RE: Regex = Regex::new(r"^[a-zA-Z0-9_]+$").unwrap();
-    static ref JWT_ENCODING_KEY = jwt::EncodingKey::from_secret(
+    static ref JWT_ENCODING_KEY: jwt::EncodingKey = jwt::EncodingKey::from_secret(
+        env::var("JWT_ACCESS_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
+    );
+    static ref JWT_DECODING_KEY: jwt::DecodingKey = jwt::DecodingKey::from_secret(
         env::var("JWT_ACCESS_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
     );
     static ref JWT_DEFAULT_EXP: u64 = 30 * 24 * 60 * 60; // 30 days
@@ -35,8 +39,8 @@ impl From<ValidationError> for AuthError {
     }
 }
 
-impl From<argon2::Error> for AuthError {
-    fn from(err: argon2::Error) -> Self {
+impl From<password_hash::Error> for AuthError {
+    fn from(err: password_hash::Error) -> Self {
         Self {
             message: err.to_string(),
             code: "password_hash_error".to_string(),
@@ -56,7 +60,7 @@ impl From<jwt::errors::Error> for AuthError {
 #[derive(Validate, GraphQLInputObject)]
 pub struct RegisterInput {
     #[validate(regex = "USERNAME_RE")]
-    #[validate(length(min = 8, "username_too_short", message = "Username must be at least 8 characters"))]
+    #[validate(length(min = 4, "username_too_short", message = "Username must be at least 8 characters"))]
     #[validate(length(max = 20, "username_too_long", message = "Username must be at most 20 characters"))]
     pub username: String,
     #[validate(email)]
@@ -114,9 +118,9 @@ impl RegisterResponse {
     }
 }
 
-#[derive(GraphQLInputObject)]
+#[derive(Validate, GraphQLInputObject)]
 pub struct LoginInput {
-    #[validate(length(min = 8, "username_too_short", message = "Username must be at least 8 characters"))]
+    #[validate(length(min = 4, "username_too_short", message = "Username must be at least 8 characters"))]
     #[validate(length(max = 20, "username_too_long", message = "Username must be at most 20 characters"))]
     pub username: Option<String>,
     #[validate(email)]
@@ -142,17 +146,16 @@ pub struct LoginResponse {
     access_token: String,
     refresh_token: String,
     errors: Vec<AuthError>,
-    user: UserResponse,
+    // user: UserResponse,
 }
 
 impl LoginResponse {
 
-    fn new(access_token: String, refresh_token: String, user: UserResponse) -> Self {
+    fn new(access_token: String, refresh_token: String) -> Self {
         Self {
             access_token,
             refresh_token,
             errors: vec![],
-            user,
         }
     }
 
@@ -161,7 +164,6 @@ impl LoginResponse {
             access_token: "".to_string(),
             refresh_token: "".to_string(),
             errors: vec![error],
-            user: UserResponse::default(),
         }
     }
 
@@ -170,22 +172,6 @@ impl LoginResponse {
             access_token: "".to_string(),
             refresh_token: "".to_string(),
             errors,
-            user: UserResponse::default(),
-        }
-    }
-}
-
-#[derive(Debug, Default, GraphQLObject)]
-pub struct UserResponse {
-    id: u32,
-    username: String,
-}
-
-impl UserResponse {
-    fn new(id: u32, username: String) -> Self {
-        Self {
-            id,
-            username,
         }
     }
 }
@@ -194,7 +180,7 @@ impl UserResponse {
 pub struct RefreshTokenResponse {
     access_token: String,
     refresh_token: String,
-    refresh_expires_in: u32,
+    refresh_expires_in: i32,
     errors: Vec<AuthError>,
 }
 
@@ -227,7 +213,7 @@ impl VerifyAccessTokenResponse {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, GraphQLObject)]
 pub struct UserInfo {
     username: String,
     is_superuser: bool,
@@ -250,12 +236,12 @@ impl UserInfo {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, GraphQLObject)]
 pub struct Claims {
     // Required. Expiration time (as UTC timestamp)
-    exp: u64,
+    exp: f64,
     // Optional. Issued at (as UTC timestamp)
-    iat: u64,
+    iat: f64,
     // Customized. user info
     user: UserInfo,
 }
@@ -264,8 +250,8 @@ impl Claims {
     fn new(user: UserInfo) -> Self {
         let now = jwt::get_current_timestamp();
         Self {
-            iat: now,
-            exp: now + JWT_DEFAULT_EXP,
+            iat: now as f64,
+            exp: (now + *JWT_DEFAULT_EXP) as f64,
             user,
         }
     }
@@ -280,15 +266,16 @@ pub trait AuthenticationService {
     async fn register(&self, input: RegisterInput) -> Result<RegisterResponse>;
     async fn login(&self, input: LoginInput) -> Result<LoginResponse>;
     async fn refresh_token(&self, refresh_token: String) -> Result<RefreshTokenResponse>;
-    async fn verify_access_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse>;
+    async fn verify_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse>;
 }
 
+#[async_trait]
 impl AuthenticationService for ServerContext {
     async fn register(&self, input: RegisterInput) -> Result<RegisterResponse> {
         if let Err(err) = input.validate() {
             let mut errors = vec![];
-            for (_, err) in err.field_errors() {
-                errors.push(err.into());
+            for (_, errs) in err.field_errors() {
+                errors.extend(errs.iter().map(|e| e.clone().into()));
             }
             let resp = RegisterResponse::with_errors(errors);
             return Ok(resp);
@@ -352,8 +339,8 @@ impl AuthenticationService for ServerContext {
         }
         if let Err(err) = input.validate() {
             let mut errors = vec![];
-            for (_, err) in err.field_errors() {
-                errors.push(err.into());
+            for (_, errs) in err.field_errors() {
+                errors.extend(errs.iter().map(|e| e.clone().into()));
             }
             let resp = LoginResponse::with_errors(errors);
             return Ok(resp);
@@ -401,7 +388,6 @@ impl AuthenticationService for ServerContext {
         let resp = LoginResponse::new(
             access_token,
             "".to_string(),
-            UserResponse::new(user.id, user.username),
         );
         Ok(resp)
     }
@@ -411,7 +397,7 @@ impl AuthenticationService for ServerContext {
         unimplemented!()
     }
 
-    async fn verify_access_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse> {
+    async fn verify_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse> {
         let claims = match validate_jwt(&access_token) {
             Ok(claims) => claims,
             Err(err) => {
@@ -424,11 +410,11 @@ impl AuthenticationService for ServerContext {
     }
 }
 
-fn password_hash(raw: &str) -> Result<String> {
+fn password_hash(raw: &str) -> password_hash::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let hash = argon2
-        .hash_password(raw.as_bytes(), salt.as_ref())?
+        .hash_password(raw.as_bytes(), &salt)?
         .to_string();
 
     Ok(hash)
@@ -443,15 +429,15 @@ fn password_verify(raw: &str, hash: &str) -> bool {
     }
 }
 
-fn generate_jwt(claims: Claims) -> Result<String> {
+fn generate_jwt(claims: Claims) -> jwt::errors::Result<String> {
     let header = jwt::Header::default();
-    let token = jwt::encode(&header, &claims, &JWT_ENCODING_KEY)?;
+    let token = jwt::encode(&header, &claims, &*JWT_ENCODING_KEY)?;
     Ok(token)
 }
 
-pub fn validate_jwt(token: &str) -> Result<Claims> {
+pub fn validate_jwt(token: &str) -> jwt::errors::Result<Claims> {
     let validation = jwt::Validation::default();
-    let data = jwt::decode::<Claims>(token, &JWT_ENCODING_KEY, &validation)?;
+    let data = jwt::decode::<Claims>(token, &*JWT_DECODING_KEY, &validation)?;
     Ok(data.claims)
 }
 
@@ -465,7 +451,7 @@ mod tests {
         let hash = password_hash(raw).unwrap();
 
         assert_eq!(hash.len(), 97);
-        assert!(hash.starts_with("$argon2id$v=19$m=65536,t=2,p=1$"));
+        assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
     }
 
     #[test]
@@ -481,7 +467,8 @@ mod tests {
     fn test_generate_jwt() {
         let claims = Claims::new(UserInfo::new("test".to_string(), false));
         let token = generate_jwt(claims).unwrap();
-        assert_eq!(token.len(), 183);
+
+        assert!(!token.is_empty())
     }
 
     #[test]

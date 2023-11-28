@@ -47,9 +47,9 @@ impl Mutation {
         Ok(resp)
     }
 
-    async fn verify_access_token(ctx: &ServerContext,
-                                 access_token: String) -> FieldResult<VerifyAccessTokenResponse> {
-        let resp = ctx.verify_access_token(access_token).await?;
+    async fn verify_token(ctx: &ServerContext,
+                          access_token: String) -> FieldResult<VerifyAccessTokenResponse> {
+        let resp = ctx.verify_token(access_token).await?;
         Ok(resp)
     }
 }
