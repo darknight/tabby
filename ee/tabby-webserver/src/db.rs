@@ -38,10 +38,9 @@ lazy_static! {
     ]);
 }
 
-#[derive(Debug, Default)]
 pub struct User {
-    created_at: String,
-    updated_at: String,
+    _created_at: String,
+    _updated_at: String,
 
     pub id: u32,
     pub username: String,
@@ -169,8 +168,8 @@ impl DbConn {
                             email: row.get(2)?,
                             password_encrypted: row.get(3)?,
                             is_admin: row.get(4)?,
-                            created_at: row.get(5)?,
-                            updated_at: row.get(6)?,
+                            _created_at: row.get(5)?,
+                            _updated_at: row.get(6)?,
                         })
                     },
                 ).optional()
@@ -195,8 +194,8 @@ impl DbConn {
                             email: row.get(2)?,
                             password_encrypted: row.get(3)?,
                             is_admin: row.get(4)?,
-                            created_at: row.get(5)?,
-                            updated_at: row.get(6)?,
+                            _created_at: row.get(5)?,
+                            _updated_at: row.get(6)?,
                         })
                     },
                 ).optional()

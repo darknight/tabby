@@ -79,7 +79,6 @@ pub struct TokenAuthResponse {
     access_token: String,
     refresh_token: String,
     errors: Vec<AuthError>,
-    // user: UserResponse,
 }
 
 impl TokenAuthResponse {
@@ -145,7 +144,7 @@ impl VerifyTokenResponse {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, GraphQLObject)]
+#[derive(Debug, Default, Serialize, Deserialize, GraphQLObject)]
 pub struct UserInfo {
     username: String,
     is_admin: bool,

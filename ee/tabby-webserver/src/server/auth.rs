@@ -37,7 +37,7 @@ pub struct RegisterInput {
     #[validate(length(
         min = 4,
         "username_too_short",
-        message = "Username must be at least 8 characters"
+        message = "Username must be at least 4 characters"
     ))]
     #[validate(length(
         max = 20,
@@ -88,7 +88,7 @@ pub struct TokenAuthInput {
     #[validate(length(
         min = 4,
         "username_too_short",
-        message = "Username must be at least 8 characters"
+        message = "Username must be at least 4 characters"
     ))]
     #[validate(length(
         max = 20,
@@ -184,7 +184,7 @@ impl AuthenticationService for DbConn {
             }
         };
 
-        // FIXME: generate refresh token
+        // TODO: generate refresh token
 
         let resp = RegisterResponse::new(access_token, "".to_string());
         Ok(resp)
@@ -242,15 +242,15 @@ impl AuthenticationService for DbConn {
             }
         };
 
-        // FIXME: generate refresh token
+        // TODO: generate refresh token
 
         let resp = TokenAuthResponse::new(access_token, "".to_string());
         Ok(resp)
     }
 
-    // FIXME: implement refresh token
+    // TODO: implement refresh token
     async fn refresh_token(&self, _refresh_token: String) -> Result<RefreshTokenResponse> {
-        unimplemented!()
+        todo!()
     }
 
     async fn verify_token(&self, access_token: String) -> Result<VerifyTokenResponse> {
@@ -330,6 +330,6 @@ mod tests {
         let claims = Claims::new(UserInfo::new("test".to_string(), false));
         let token = generate_jwt(claims).unwrap();
         let claims = validate_jwt(&token).unwrap();
-        assert_eq!(claims.user, UserInfo::new("test".to_string(), false));
+        assert_eq!(claims.user_info(), UserInfo::new("test".to_string(), false));
     }
 }
