@@ -1,4 +1,4 @@
-use std::{borrow::Cow, env};
+use std::env;
 
 use anyhow::Result;
 use argon2::{
@@ -8,59 +8,30 @@ use argon2::{
 };
 use async_trait::async_trait;
 use jsonwebtoken as jwt;
-use juniper::{GraphQLInputObject, GraphQLObject};
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use validator::{Validate, ValidationError};
+use validator::Validate;
 
-use crate::server::ServerContext;
+use crate::{
+    db::DbConn,
+    schema::auth::{
+        AuthError, Claims, RefreshTokenResponse, RegisterResponse, TokenAuthResponse, UserInfo,
+        VerifyTokenResponse,
+    },
+};
 
 lazy_static! {
     static ref USERNAME_RE: Regex = Regex::new(r"^[a-zA-Z0-9_]+$").unwrap();
     static ref JWT_ENCODING_KEY: jwt::EncodingKey = jwt::EncodingKey::from_secret(
-        env::var("JWT_ACCESS_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
+        env::var("TABBY_WEBSERVER_JWT_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
     );
     static ref JWT_DECODING_KEY: jwt::DecodingKey = jwt::DecodingKey::from_secret(
-        env::var("JWT_ACCESS_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
+        env::var("TABBY_WEBSERVER_JWT_TOKEN_SECRET").unwrap_or("default_secret".to_string()).as_bytes()
     );
-    static ref JWT_DEFAULT_EXP: u64 = 30 * 24 * 60 * 60; // 30 days
+    pub static ref JWT_DEFAULT_EXP: u64 = 30 * 24 * 60 * 60; // 30 days
 }
 
-#[derive(Debug, GraphQLObject)]
-pub struct AuthError {
-    message: String,
-    code: String,
-}
-
-impl From<ValidationError> for AuthError {
-    fn from(err: ValidationError) -> Self {
-        Self {
-            message: err.message.unwrap_or(Cow::from("unknown error")).into(),
-            code: err.code.to_string(),
-        }
-    }
-}
-
-impl From<password_hash::Error> for AuthError {
-    fn from(err: password_hash::Error) -> Self {
-        Self {
-            message: err.to_string(),
-            code: "password_hash_error".to_string(),
-        }
-    }
-}
-
-impl From<jwt::errors::Error> for AuthError {
-    fn from(err: jwt::errors::Error) -> Self {
-        Self {
-            message: err.to_string(),
-            code: "jwt_error".to_string(),
-        }
-    }
-}
-
-#[derive(Validate, GraphQLInputObject)]
+#[derive(Validate)]
 pub struct RegisterInput {
     #[validate(regex = "USERNAME_RE")]
     #[validate(length(
@@ -112,41 +83,8 @@ impl std::fmt::Debug for RegisterInput {
     }
 }
 
-#[derive(Debug, GraphQLObject)]
-pub struct RegisterResponse {
-    access_token: String,
-    refresh_token: String,
-    errors: Vec<AuthError>,
-}
-
-impl RegisterResponse {
-    pub fn new(access_token: String, refresh_token: String) -> Self {
-        Self {
-            access_token,
-            refresh_token,
-            errors: vec![],
-        }
-    }
-
-    fn with_error(error: AuthError) -> Self {
-        Self {
-            access_token: "".to_string(),
-            refresh_token: "".to_string(),
-            errors: vec![error],
-        }
-    }
-
-    fn with_errors(errors: Vec<AuthError>) -> Self {
-        Self {
-            access_token: "".to_string(),
-            refresh_token: "".to_string(),
-            errors,
-        }
-    }
-}
-
-#[derive(Validate, GraphQLInputObject)]
-pub struct LoginInput {
+#[derive(Validate)]
+pub struct TokenAuthInput {
     #[validate(length(
         min = 4,
         "username_too_short",
@@ -178,9 +116,9 @@ pub struct LoginInput {
     pub password: String,
 }
 
-impl std::fmt::Debug for LoginInput {
+impl std::fmt::Debug for TokenAuthInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LoginInput")
+        f.debug_struct("TokenAuthInput")
             .field("username", &self.username)
             .field("email", &self.email)
             .field("password", &"********")
@@ -188,135 +126,16 @@ impl std::fmt::Debug for LoginInput {
     }
 }
 
-#[derive(Debug, GraphQLObject)]
-pub struct LoginResponse {
-    access_token: String,
-    refresh_token: String,
-    errors: Vec<AuthError>,
-    // user: UserResponse,
-}
-
-impl LoginResponse {
-    fn new(access_token: String, refresh_token: String) -> Self {
-        Self {
-            access_token,
-            refresh_token,
-            errors: vec![],
-        }
-    }
-
-    fn with_error(error: AuthError) -> Self {
-        Self {
-            access_token: "".to_string(),
-            refresh_token: "".to_string(),
-            errors: vec![error],
-        }
-    }
-
-    fn with_errors(errors: Vec<AuthError>) -> Self {
-        Self {
-            access_token: "".to_string(),
-            refresh_token: "".to_string(),
-            errors,
-        }
-    }
-}
-
-#[derive(Debug, GraphQLObject)]
-pub struct RefreshTokenResponse {
-    access_token: String,
-    refresh_token: String,
-    refresh_expires_in: i32,
-    errors: Vec<AuthError>,
-}
-
-#[derive(Debug, GraphQLObject)]
-pub struct VerifyAccessTokenResponse {
-    errors: Vec<AuthError>,
-    claims: Claims,
-}
-
-impl VerifyAccessTokenResponse {
-    fn new(claims: Claims) -> Self {
-        Self {
-            errors: vec![],
-            claims,
-        }
-    }
-
-    fn with_error(error: AuthError) -> Self {
-        Self {
-            errors: vec![error],
-            claims: Claims::default(),
-        }
-    }
-
-    fn with_errors(errors: Vec<AuthError>) -> Self {
-        Self {
-            errors,
-            claims: Claims::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, GraphQLObject)]
-pub struct UserInfo {
-    username: String,
-    is_superuser: bool,
-}
-
-impl UserInfo {
-    pub fn new(username: String, is_superuser: bool) -> Self {
-        Self {
-            username,
-            is_superuser,
-        }
-    }
-
-    pub fn is_superuser(&self) -> bool {
-        self.is_superuser
-    }
-
-    pub fn username(&self) -> &str {
-        &self.username
-    }
-}
-
-#[derive(Debug, Default, Serialize, Deserialize, GraphQLObject)]
-pub struct Claims {
-    // Required. Expiration time (as UTC timestamp)
-    exp: f64,
-    // Optional. Issued at (as UTC timestamp)
-    iat: f64,
-    // Customized. user info
-    user: UserInfo,
-}
-
-impl Claims {
-    fn new(user: UserInfo) -> Self {
-        let now = jwt::get_current_timestamp();
-        Self {
-            iat: now as f64,
-            exp: (now + *JWT_DEFAULT_EXP) as f64,
-            user,
-        }
-    }
-
-    pub fn user_info(self) -> UserInfo {
-        self.user
-    }
-}
-
 #[async_trait]
 pub trait AuthenticationService {
     async fn register(&self, input: RegisterInput) -> Result<RegisterResponse>;
-    async fn login(&self, input: LoginInput) -> Result<LoginResponse>;
+    async fn token_auth(&self, input: TokenAuthInput) -> Result<TokenAuthResponse>;
     async fn refresh_token(&self, refresh_token: String) -> Result<RefreshTokenResponse>;
-    async fn verify_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse>;
+    async fn verify_token(&self, access_token: String) -> Result<VerifyTokenResponse>;
 }
 
 #[async_trait]
-impl AuthenticationService for ServerContext {
+impl AuthenticationService for DbConn {
     async fn register(&self, input: RegisterInput) -> Result<RegisterResponse> {
         if let Err(err) = input.validate() {
             let mut errors = vec![];
@@ -328,7 +147,7 @@ impl AuthenticationService for ServerContext {
         }
 
         // check if username exists
-        if let Some(_) = self.db_conn.get_user_by_email(&input.email).await? {
+        if let Some(_) = self.get_user_by_email(&input.email).await? {
             let resp = RegisterResponse::with_error(AuthError {
                 message: "Email already exists".to_string(),
                 code: "email_already_exists".to_string(),
@@ -336,7 +155,7 @@ impl AuthenticationService for ServerContext {
             return Ok(resp);
         }
         // check if email exists
-        if let Some(_) = self.db_conn.get_user_by_username(&input.username).await? {
+        if let Some(_) = self.get_user_by_username(&input.username).await? {
             let resp = RegisterResponse::with_error(AuthError {
                 message: "Username already exists".to_string(),
                 code: "username_already_exists".to_string(),
@@ -351,18 +170,13 @@ impl AuthenticationService for ServerContext {
             }
         };
 
-        self.db_conn
-            .create_user(input.username.clone(), input.email.clone(), pwd_hash, false)
+        self.create_user(input.username.clone(), input.email.clone(), pwd_hash, false)
             .await?;
-        let user = self
-            .db_conn
-            .get_user_by_username(&input.username)
-            .await?
-            .unwrap();
+        let user = self.get_user_by_username(&input.username).await?.unwrap();
 
         let access_token = match generate_jwt(Claims::new(UserInfo::new(
             user.username.clone(),
-            user.is_superuser,
+            user.is_admin,
         ))) {
             Ok(token) => token,
             Err(err) => {
@@ -376,9 +190,9 @@ impl AuthenticationService for ServerContext {
         Ok(resp)
     }
 
-    async fn login(&self, input: LoginInput) -> Result<LoginResponse> {
+    async fn token_auth(&self, input: TokenAuthInput) -> Result<TokenAuthResponse> {
         if input.email.is_none() && input.username.is_none() {
-            let resp = LoginResponse::with_error(AuthError {
+            let resp = TokenAuthResponse::with_error(AuthError {
                 message: "Username or email is required".to_string(),
                 code: "username_or_email_required".to_string(),
             });
@@ -389,22 +203,20 @@ impl AuthenticationService for ServerContext {
             for (_, errs) in err.field_errors() {
                 errors.extend(errs.iter().map(|e| e.clone().into()));
             }
-            let resp = LoginResponse::with_errors(errors);
+            let resp = TokenAuthResponse::with_errors(errors);
             return Ok(resp);
         }
 
         let user = if let Some(email) = input.email {
-            self.db_conn.get_user_by_email(&email).await?
+            self.get_user_by_email(&email).await?
         } else {
-            self.db_conn
-                .get_user_by_username(&input.username.unwrap())
-                .await?
+            self.get_user_by_username(&input.username.unwrap()).await?
         };
 
         let user = match user {
             Some(user) => user,
             None => {
-                let resp = LoginResponse::with_error(AuthError {
+                let resp = TokenAuthResponse::with_error(AuthError {
                     message: "User not found".to_string(),
                     code: "user_not_found".to_string(),
                 });
@@ -412,8 +224,8 @@ impl AuthenticationService for ServerContext {
             }
         };
 
-        if !password_verify(&input.password, &user.password) {
-            let resp = LoginResponse::with_error(AuthError {
+        if !password_verify(&input.password, &user.password_encrypted) {
+            let resp = TokenAuthResponse::with_error(AuthError {
                 message: "Incorrect password".to_string(),
                 code: "incorrect_password".to_string(),
             });
@@ -422,17 +234,17 @@ impl AuthenticationService for ServerContext {
 
         let access_token = match generate_jwt(Claims::new(UserInfo::new(
             user.username.clone(),
-            user.is_superuser,
+            user.is_admin,
         ))) {
             Ok(token) => token,
             Err(err) => {
-                return Ok(LoginResponse::with_error(err.into()));
+                return Ok(TokenAuthResponse::with_error(err.into()));
             }
         };
 
         // FIXME: generate refresh token
 
-        let resp = LoginResponse::new(access_token, "".to_string());
+        let resp = TokenAuthResponse::new(access_token, "".to_string());
         Ok(resp)
     }
 
@@ -441,15 +253,15 @@ impl AuthenticationService for ServerContext {
         unimplemented!()
     }
 
-    async fn verify_token(&self, access_token: String) -> Result<VerifyAccessTokenResponse> {
+    async fn verify_token(&self, access_token: String) -> Result<VerifyTokenResponse> {
         let claims = match validate_jwt(&access_token) {
             Ok(claims) => claims,
             Err(err) => {
-                return Ok(VerifyAccessTokenResponse::with_error(err.into()));
+                return Ok(VerifyTokenResponse::with_error(err.into()));
             }
         };
 
-        let resp = VerifyAccessTokenResponse::new(claims);
+        let resp = VerifyTokenResponse::new(claims);
         Ok(resp)
     }
 }

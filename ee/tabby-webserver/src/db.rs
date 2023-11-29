@@ -23,62 +23,15 @@ lazy_static! {
         M::up(
             r#"
             CREATE TABLE IF NOT EXISTS users (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                username     VARCHAR(150) NOT NULL COLLATE NOCASE,
-                email        VARCHAR(150) NOT NULL COLLATE NOCASE,
-                password     VARCHAR(128) NOT NULL,
-                is_superuser BOOLEAN NOT NULL DEFAULT 0,
-                is_active    BOOLEAN NOT NULL DEFAULT 1,
-                created_at   TIMESTAMP DEFAULT (DATETIME('now')),
-                updated_at   TIMESTAMP DEFAULT (DATETIME('now')),
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                username           VARCHAR(150) NOT NULL COLLATE NOCASE,
+                email              VARCHAR(150) NOT NULL COLLATE NOCASE,
+                password_encrypted VARCHAR(128) NOT NULL,
+                is_admin           BOOLEAN NOT NULL DEFAULT 0,
+                created_at         TIMESTAMP DEFAULT (DATETIME('now')),
+                updated_at         TIMESTAMP DEFAULT (DATETIME('now')),
                 CONSTRAINT `idx_username` UNIQUE (`username`),
                 CONSTRAINT `idx_email` UNIQUE (`email`)
-            );
-        "#
-        ),
-        M::up(
-            r#"
-            CREATE TABLE IF NOT EXISTS roles (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                name        VARCHAR(150) NOT NULL COLLATE NOCASE,
-                description VARCHAR(255) NOT NULL,
-                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                CONSTRAINT `idx_name` UNIQUE (`name`)
-            );
-        "#
-        ),
-        M::up(
-            r#"
-            CREATE TABLE IF NOT EXISTS user_role_bindings (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id  INTEGER NOT NULL,
-                role_id  INTEGER NOT NULL,
-                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                CONSTRAINT `idx_user_role` UNIQUE (`user_id`, `role_id`)
-            );
-        "#
-        ),
-        M::up(
-            r#"
-            CREATE TABLE IF NOT EXISTS permissions (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                name        VARCHAR(150) NOT NULL COLLATE NOCASE,
-                description VARCHAR(255) NOT NULL,
-                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                updated_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                CONSTRAINT `idx_name` UNIQUE (`name`)
-            );
-        "#
-        ),
-        M::up(
-            r#"
-            CREATE TABLE IF NOT EXISTS role_permission_bindings (
-                id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                role_id  INTEGER NOT NULL,
-                permission_id  INTEGER NOT NULL,
-                created_at  TIMESTAMP DEFAULT (DATETIME('now')),
-                CONSTRAINT `idx_role_permission` UNIQUE (`role_id`, `permission_id`)
             );
         "#
         ),
@@ -87,15 +40,14 @@ lazy_static! {
 
 #[derive(Debug, Default)]
 pub struct User {
-    is_active: bool,
     created_at: String,
     updated_at: String,
 
     pub id: u32,
     pub username: String,
     pub email: String,
-    pub password: String,
-    pub is_superuser: bool,
+    pub password_encrypted: String,
+    pub is_admin: bool,
 }
 
 async fn db_path() -> Result<PathBuf> {
@@ -104,6 +56,7 @@ async fn db_path() -> Result<PathBuf> {
     Ok(db_dir.join("db.sqlite"))
 }
 
+#[derive(Clone)]
 pub struct DbConn {
     conn: Arc<Connection>,
 }
@@ -116,7 +69,6 @@ impl DbConn {
     }
 
     /// Initialize database, create tables and insert first token if not exist
-    /// Add default `admin` if not exist
     async fn init_db(mut conn: Connection) -> Result<Self> {
         MIGRATIONS.to_latest(&mut conn).await?;
 
@@ -126,30 +78,6 @@ impl DbConn {
                 r#"INSERT OR IGNORE INTO registration_token (id, token) VALUES (1, ?)"#,
                 params![token],
             )
-        })
-        .await?;
-
-        conn.call(|c| {
-            c.execute_batch(r#"
-                BEGIN;
-                INSERT OR IGNORE INTO users (username, email, password, is_superuser) VALUES ('tabby', 'hello@tabby.com', '$argon2id$v=19$m=19456,t=2,p=1$1JuxpDPavKcYpDzo95rnMw$Wep8E2BRzIHZWQNCx+Gr/VKdiE68ngBUmq7vy/8CDhc', 1);
-                INSERT OR IGNORE INTO roles (name, description) VALUES ('admin', 'System default administrator');
-                INSERT OR IGNORE INTO user_role_bindings (user_id, role_id) VALUES (
-                    (SELECT id FROM users WHERE username = 'tabby'),
-                    (SELECT id FROM roles WHERE name = 'admin')
-                );
-                INSERT OR IGNORE INTO permissions (name, description) VALUES ('repo.resolve.view', 'Access to local repositories');
-                INSERT OR IGNORE INTO permissions (name, description) VALUES ('repo.meta.view', 'Access to local repositories meta');
-                INSERT OR IGNORE INTO role_permission_bindings (role_id, permission_id) VALUES (
-                    (SELECT id FROM roles WHERE name = 'admin'),
-                    (SELECT id FROM permissions WHERE name = 'repo.resolve.view')
-                );
-                INSERT OR IGNORE INTO role_permission_bindings (role_id, permission_id) VALUES (
-                    (SELECT id FROM roles WHERE name = 'admin'),
-                    (SELECT id FROM permissions WHERE name = 'repo.meta.view')
-                );
-                COMMIT;
-            "#)
         })
         .await?;
 
@@ -207,15 +135,15 @@ impl DbConn {
         &self,
         username: String,
         email: String,
-        password: String,
-        is_superuser: bool,
+        password_encrypted: String,
+        is_admin: bool,
     ) -> Result<()> {
         let res = self
             .conn
             .call(move |c| {
                 c.execute(
-                    r#"INSERT INTO users (username, email, password, is_superuser) VALUES (?, ?, ?, ?)"#,
-                    params![username, email, password, is_superuser],
+                    r#"INSERT INTO users (username, email, password_encrypted, is_admin) VALUES (?, ?, ?, ?)"#,
+                    params![username, email, password_encrypted, is_admin],
                 )
             })
             .await?;
@@ -232,18 +160,17 @@ impl DbConn {
             .conn
             .call(move |c| {
                 c.query_row(
-                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM users WHERE username = ?"#,
+                    r#"SELECT id, username, email, password_encrypted, is_admin, created_at, updated_at FROM users WHERE username = ?"#,
                     params![username],
                     |row| {
                         Ok(User {
                             id: row.get(0)?,
                             username: row.get(1)?,
                             email: row.get(2)?,
-                            password: row.get(3)?,
-                            is_superuser: row.get(4)?,
-                            is_active: row.get(5)?,
-                            created_at: row.get(6)?,
-                            updated_at: row.get(7)?,
+                            password_encrypted: row.get(3)?,
+                            is_admin: row.get(4)?,
+                            created_at: row.get(5)?,
+                            updated_at: row.get(6)?,
                         })
                     },
                 ).optional()
@@ -259,18 +186,17 @@ impl DbConn {
             .conn
             .call(move |c| {
                 c.query_row(
-                    r#"SELECT id, username, email, password, is_superuser, is_active, created_at, updated_at FROM users WHERE email = ?"#,
+                    r#"SELECT id, username, email, password_encrypted, is_admin, created_at, updated_at FROM users WHERE email = ?"#,
                     params![email],
                     |row| {
                         Ok(User {
                             id: row.get(0)?,
                             username: row.get(1)?,
                             email: row.get(2)?,
-                            password: row.get(3)?,
-                            is_superuser: row.get(4)?,
-                            is_active: row.get(5)?,
-                            created_at: row.get(6)?,
-                            updated_at: row.get(7)?,
+                            password_encrypted: row.get(3)?,
+                            is_admin: row.get(4)?,
+                            created_at: row.get(5)?,
+                            updated_at: row.get(6)?,
                         })
                     },
                 ).optional()
@@ -278,32 +204,6 @@ impl DbConn {
             .await?;
 
         Ok(user)
-    }
-}
-
-/// db read operations to query permissions
-impl DbConn {
-    pub async fn get_user_all_permissions(&self, username: &str) -> Result<Vec<String>> {
-        let username = username.to_string();
-
-        let perms = self
-            .conn
-            .call(move |c| {
-                let mut stmt = c.prepare(
-                    r#"SELECT p.name FROM permissions p
-                    INNER JOIN role_permission_bindings rpb ON rpb.permission_id = p.id
-                    INNER JOIN user_role_bindings urb ON urb.role_id = rpb.role_id
-                    INNER JOIN users u ON u.id = urb.user_id
-                    WHERE u.username = ?"#,
-                )?;
-                let rows = stmt
-                    .query_map(params![username], |row| row.get(0))?
-                    .collect::<Result<Vec<String>, rusqlite::Error>>()?;
-                Ok(rows)
-            })
-            .await?;
-
-        Ok(perms)
     }
 }
 
@@ -346,12 +246,12 @@ mod tests {
         let username = "test";
         let email = "test@example.com";
         let passwd = "123456";
-        let is_superuser = true;
+        let is_admin = true;
         conn.create_user(
             username.to_string(),
             email.to_string(),
             passwd.to_string(),
-            is_superuser,
+            is_admin,
         )
         .await
         .unwrap();

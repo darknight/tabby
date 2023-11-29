@@ -10,8 +10,6 @@ use tokio::sync::Mutex;
 use tracing::{error, warn};
 use websocket::WebSocketTransport;
 
-mod authentication;
-mod authorization;
 mod db;
 mod repositories;
 mod server;
@@ -52,8 +50,8 @@ pub async fn attach_webserver(
         )
         .route("/graphql", routing::get(playground("/graphql", None)))
         .layer(Extension(schema))
-        .route("/hub", routing::get(ws_handler).with_state(ctx.clone()))
-        .nest("/repositories", repositories::routes(ctx));
+        .route("/hub", routing::get(ws_handler).with_state(ctx))
+        .nest("/repositories", repositories::routes());
 
     let ui = ui
         .route("/graphiql", routing::get(graphiql("/graphql", None)))
