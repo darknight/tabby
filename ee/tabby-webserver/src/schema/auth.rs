@@ -144,7 +144,7 @@ impl VerifyTokenResponse {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, GraphQLObject)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize, GraphQLObject)]
 pub struct UserInfo {
     username: String,
     is_admin: bool,
