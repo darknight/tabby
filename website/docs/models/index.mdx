@@ -13,6 +13,16 @@ import GitHubReadme from "./readme";
 
 Mainland Chinese users might encounter challenges accessing Hugging Face. For models with mirrored to modelscope, you could download model by utilizing following environment variable:
 
+For Linux & MacOS `Bash` shell:
+
 ```bash
 TABBY_DOWNLOAD_HOST=modelscope.cn tabby serve --model TabbyML/StarCoder-1B
+```
+
+For Windows `PowerShell`:
+
+```shell
+$env:TABBY_DOWNLOAD_HOST="modelscope.cn"
+
+tabby serve --model TabbyML/StarCoder-1B
 ```
