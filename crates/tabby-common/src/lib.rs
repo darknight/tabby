@@ -4,6 +4,7 @@ pub mod index;
 pub mod languages;
 pub mod path;
 pub mod registry;
+pub mod schema;
 pub mod usage;
 
 use std::{

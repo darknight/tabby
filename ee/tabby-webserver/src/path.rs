@@ -9,3 +9,7 @@ fn tabby_ee_root() -> PathBuf {
 pub fn db_file() -> PathBuf {
     tabby_ee_root().join("db.sqlite")
 }
+
+pub fn cron_job_runs_dir() -> PathBuf {
+    tabby_root().join("runs")
+}

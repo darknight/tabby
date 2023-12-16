@@ -40,6 +40,11 @@ pub enum Commands {
     /// Run scheduler progress for cron jobs integrating external code repositories.
     Scheduler(SchedulerArgs),
 
+    /// Run specified job in background
+    #[cfg(feature = "ee")]
+    #[clap(name = "scheduler::job", hide = true)]
+    SchedulerJob(SchedulerJobArgs),
+
     /// Run completion model as worker
     #[cfg(feature = "ee")]
     #[clap(name = "worker::completion")]
@@ -58,6 +63,23 @@ pub struct SchedulerArgs {
     /// If true, runs scheduler jobs immediately.
     #[clap(long, default_value_t = false)]
     now: bool,
+}
+
+#[cfg(feature = "ee")]
+#[derive(clap::Args)]
+pub struct SchedulerJobArgs {
+    #[clap(long)]
+    run: SchedulerJob,
+}
+
+#[cfg(feature = "ee")]
+#[derive(clap::ValueEnum, strum::Display, PartialEq, Clone)]
+pub enum SchedulerJob {
+    #[strum(serialize = "sync-repository")]
+    SyncRepository,
+
+    #[strum(serialize = "index-repository")]
+    IndexRepository,
 }
 
 #[derive(clap::ValueEnum, strum::Display, PartialEq, Clone)]
@@ -121,6 +143,10 @@ async fn main() {
         Commands::Scheduler(args) => tabby_scheduler::scheduler(args.now)
             .await
             .unwrap_or_else(|err| fatal!("Scheduler failed due to '{}'", err)),
+        #[cfg(feature = "ee")]
+        Commands::SchedulerJob(args) => {
+            tabby_scheduler::scheduler_job(args.run.to_string())
+        },
         #[cfg(feature = "ee")]
         Commands::WorkerCompletion(args) => {
             worker::main(tabby_webserver::public::WorkerKind::Completion, args).await

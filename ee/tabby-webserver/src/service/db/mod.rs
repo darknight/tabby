@@ -11,7 +11,7 @@ use rusqlite::params;
 use rusqlite_migration::AsyncMigrations;
 use tokio_rusqlite::Connection;
 
-use crate::{path::db_file, service::cron::run_offline_job};
+use crate::{path::db_file, service::cron::run_offline_job_async};
 
 static MIGRATIONS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/migrations");
 
@@ -54,7 +54,7 @@ impl DbConn {
         let res = Self {
             conn: Arc::new(conn),
         };
-        run_offline_job(res.clone());
+        run_offline_job_async(res.clone());
 
         Ok(res)
     }

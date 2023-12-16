@@ -23,6 +23,7 @@ use crate::schema::{
     worker::{RegisterWorkerError, Worker, WorkerKind, WorkerService},
     ServiceLocator,
 };
+use crate::service::cron::run_offline_job;
 
 struct ServerContext {
     client: Client<HttpConnector>,
@@ -199,5 +200,6 @@ pub async fn create_service_locator(
     logger: Arc<dyn RawEventLogger>,
     code: Arc<dyn CodeSearch>,
 ) -> Arc<dyn ServiceLocator> {
+    run_offline_job();
     Arc::new(ServerContext::new(logger, code).await)
 }
