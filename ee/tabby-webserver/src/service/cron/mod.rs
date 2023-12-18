@@ -5,6 +5,8 @@ use crate::service::db::DbConn;
 
 #[macro_use]
 pub mod job;
+mod output;
+pub use output::read_run_output;
 
 async fn new_job_scheduler(jobs: Vec<Job>) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;

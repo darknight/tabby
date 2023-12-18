@@ -9,9 +9,11 @@ use juniper::{
     graphql_object, graphql_value, EmptySubscription, FieldError, GraphQLObject, IntoFieldError,
     Object, RootNode, ScalarValue, Value,
 };
+use serde::{Deserialize, Serialize};
 use juniper_axum::FromAuth;
 use tabby_common::api::{code::CodeSearch, event::RawEventLogger};
 use validator::ValidationErrors;
+use tabby_common::schema::SchedulerRunMeta;
 
 use self::{
     auth::{validate_jwt, Invitation, RegisterError, TokenAuthError},
@@ -24,6 +26,7 @@ use crate::schema::{
     },
     worker::Worker,
 };
+use crate::service::read_run_output;
 
 pub trait ServiceLocator: Send + Sync {
     fn auth(&self) -> &dyn AuthenticationService;
@@ -128,6 +131,32 @@ impl Query {
         }
         Err(CoreError::Unauthorized("Only admin is able to query users"))
     }
+
+    async fn scheduler_runs(
+        ctx: &Context,
+        job_name: String,
+        offset: Option<i32>,
+        limit: Option<i32>,
+        oldest_first: Option<bool>,
+    ) -> Result<Vec<SchedulerRunOutput>> {
+        return Ok(read_run_output(
+            &job_name,
+            offset.unwrap_or(0) as usize,
+            limit.unwrap_or(10) as usize,
+            oldest_first.unwrap_or(false)
+        ).await?);
+        if let Some(claims) = &ctx.claims {
+            if claims.is_admin {
+                return Ok(read_run_output(
+                    &job_name,
+                    offset.unwrap_or(0) as usize,
+                    limit.unwrap_or(10) as usize,
+                    oldest_first.unwrap_or(false)
+                ).await?);
+            }
+        }
+        Err(CoreError::Unauthorized("Only admin is able to query scheduler run outputs"))
+    }
 }
 
 #[derive(Debug, GraphQLObject)]
@@ -136,6 +165,32 @@ pub struct User {
     pub is_admin: bool,
     pub auth_token: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, GraphQLObject)]
+pub struct Meta {
+    pub start_time: DateTime<Utc>,
+    pub finish_time: DateTime<Utc>,
+    pub success: bool,
+}
+
+impl From<SchedulerRunMeta> for Meta {
+    fn from(meta: SchedulerRunMeta) -> Self {
+        Self {
+            start_time: meta.start_time,
+            finish_time: meta.finish_time,
+            success: meta.success,
+        }
+    }
+}
+
+#[derive(Debug, GraphQLObject)]
+pub struct SchedulerRunOutput {
+    pub run_id: String,
+    pub meta: Meta,
+    pub stdout: String,
+    pub stderr: String,
+    pub total_runs: i32,
 }
 
 #[derive(Default)]
